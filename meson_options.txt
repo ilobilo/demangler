@@ -1,0 +1,1 @@
+option('only_itanium', type : 'boolean', value : false, description : 'Only enable Itanium demangler and __cxa_demangle')
