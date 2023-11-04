@@ -6044,7 +6044,7 @@ Node *AbstractManglingParser<Derived, Alloc>::parseEncoding()
         decltype(OuterTemplateParams) OldOuterParams;
 
     public:
-        SaveTemplateParams(AbstractManglingParser *TheParser) :
+        __attribute__((no_sanitize("alignment"))) SaveTemplateParams(AbstractManglingParser *TheParser) :
             Parser(TheParser)
         {
             OldParams = std::move(Parser->TemplateParams);
@@ -6052,7 +6052,7 @@ Node *AbstractManglingParser<Derived, Alloc>::parseEncoding()
             Parser->TemplateParams.clear();
             Parser->OuterTemplateParams.clear();
         }
-        ~SaveTemplateParams()
+        __attribute__((no_sanitize("alignment"))) ~SaveTemplateParams()
         {
             Parser->TemplateParams = std::move(OldParams);
             Parser->OuterTemplateParams = std::move(OldOuterParams);
