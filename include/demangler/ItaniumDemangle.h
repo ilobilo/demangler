@@ -1494,27 +1494,6 @@ public:
     }
 };
 
-class BinaryFPType final : public Node
-{
-    const Node *Dimension;
-
-public:
-    BinaryFPType(const Node *Dimension_) :
-        Node(KBinaryFPType), Dimension(Dimension_) { }
-
-    template<typename Fn>
-    void match(Fn F) const
-    {
-        F(Dimension);
-    }
-
-    void printLeft(OutputBuffer &OB) const override
-    {
-        OB += "_Float";
-        Dimension->print(OB);
-    }
-};
-
 enum class TemplateParamKind
 {
     Type,
@@ -3012,80 +2991,6 @@ public:
     }
 };
 
-template<class Float>
-struct FloatData;
-
-namespace float_literal_impl
-{
-    constexpr Node::Kind getFloatLiteralKind(float *)
-    {
-        return Node::KFloatLiteral;
-    }
-    constexpr Node::Kind getFloatLiteralKind(double *)
-    {
-        return Node::KDoubleLiteral;
-    }
-    constexpr Node::Kind getFloatLiteralKind(long double *)
-    {
-        return Node::KLongDoubleLiteral;
-    }
-} // namespace float_literal_impl
-
-template<class Float>
-class FloatLiteralImpl : public Node
-{
-    const StringView Contents;
-
-    static constexpr Kind KindForClass =
-        float_literal_impl::getFloatLiteralKind((Float *)nullptr);
-
-public:
-    FloatLiteralImpl(StringView Contents_) :
-        Node(KindForClass), Contents(Contents_) { }
-
-    template<typename Fn>
-    void match(Fn F) const
-    {
-        F(Contents);
-    }
-
-    void printLeft(OutputBuffer &OB) const override
-    {
-        const char *first = Contents.begin();
-        const char *last = Contents.end() + 1;
-
-        const size_t N = FloatData<Float>::mangled_size;
-        if (static_cast<std::size_t>(last - first) > N)
-        {
-            last = first + N;
-            union
-            {
-                Float value;
-                char buf[sizeof(Float)];
-            };
-            const char *t = first;
-            char *e = buf;
-            for (; t != last; ++t, ++e)
-            {
-                unsigned d1 = isdigit(*t) ? static_cast<unsigned>(*t - '0') : static_cast<unsigned>(*t - 'a' + 10);
-                ++t;
-                unsigned d0 = isdigit(*t) ? static_cast<unsigned>(*t - '0') : static_cast<unsigned>(*t - 'a' + 10);
-                *e = static_cast<char>((d1 << 4) + d0);
-            }
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-            std::reverse(buf, e);
-#endif
-            char num[FloatData<Float>::max_demangled_size] = { 0 };
-            int n = snprintf(num, sizeof(num), FloatData<Float>::spec, value);
-            OB += StringView(num, num + n);
-        }
-    }
-};
-
-using FloatLiteral = FloatLiteralImpl<float>;
-using DoubleLiteral = FloatLiteralImpl<double>;
-using LongDoubleLiteral = FloatLiteralImpl<long double>;
-
 /// Visit the node. Calls \c F(P), where \c P is the node cast to the
 /// appropriate derived class.
 template<typename Fn>
@@ -3281,8 +3186,6 @@ struct AbstractManglingParser
     Node *parseBinaryExpr(StringView Kind, Node::Prec Prec);
     Node *parseIntegerLiteral(StringView Lit);
     Node *parseExprPrimary();
-    template<class Float>
-    Node *parseFloatingLiteral();
     Node *parseFunctionParam();
     Node *parseConversionExpr();
     Node *parseBracedExpr();
@@ -4763,22 +4666,6 @@ Node *AbstractManglingParser<Derived, Alloc>::parseType()
         case 'o':
             ++First;
             return make<NameType>("unsigned __int128");
-        //                ::= f    # float
-        case 'f':
-            ++First;
-            return make<NameType>("float");
-        //                ::= d    # double
-        case 'd':
-            ++First;
-            return make<NameType>("double");
-        //                ::= e    # long double, __float80
-        case 'e':
-            ++First;
-            return make<NameType>("long double");
-        //                ::= g    # __float128
-        case 'g':
-            ++First;
-            return make<NameType>("__float128");
         //                ::= z    # ellipsis
         case 'z':
             ++First;
@@ -4800,33 +4687,6 @@ Node *AbstractManglingParser<Derived, Alloc>::parseType()
         case 'D':
             switch (look(1))
             {
-                //                ::= Dd   # IEEE 754r decimal floating point (64 bits)
-                case 'd':
-                    First += 2;
-                    return make<NameType>("decimal64");
-                //                ::= De   # IEEE 754r decimal floating point (128 bits)
-                case 'e':
-                    First += 2;
-                    return make<NameType>("decimal128");
-                //                ::= Df   # IEEE 754r decimal floating point (32 bits)
-                case 'f':
-                    First += 2;
-                    return make<NameType>("decimal32");
-                //                ::= Dh   # IEEE 754r half-precision floating point (16 bits)
-                case 'h':
-                    First += 2;
-                    return make<NameType>("half");
-                //                ::= DF <number> _ # ISO/IEC TS 18661 binary floating point (N bits)
-                case 'F':
-                {
-                    First += 2;
-                    Node *DimensionNumber = make<NameType>(parseNumber());
-                    if (!DimensionNumber)
-                        return nullptr;
-                    if (!consumeIf('_'))
-                        return nullptr;
-                    return make<BinaryFPType>(DimensionNumber);
-                }
                 //                ::= DB <number> _                             # C23 signed _BitInt(N)
                 //                ::= DB <instantiation-dependent expression> _ # C23 signed _BitInt(N)
                 //                ::= DU <number> _                             # C23 unsigned _BitInt(N)
@@ -5174,11 +5034,9 @@ Node *AbstractManglingParser<Derived, Alloc>::parseConversionExpr()
 }
 
 // <expr-primary> ::= L <type> <value number> E                          # integer literal
-//                ::= L <type> <value float> E                           # floating literal
 //                ::= L <string type> E                                  # string literal
 //                ::= L <nullptr type> E                                 # nullptr literal (i.e., "LDnE")
 //                ::= L <lambda type> E                                  # lambda expression
-// FIXME:         ::= L <type> <real-part float> _ <imag-part float> E   # complex floating point literal (C 2000)
 //                ::= L <mangled-name> E                                 # external name
 template<typename Derived, typename Alloc>
 Node *AbstractManglingParser<Derived, Alloc>::parseExprPrimary()
@@ -5235,21 +5093,6 @@ Node *AbstractManglingParser<Derived, Alloc>::parseExprPrimary()
         case 'o':
             ++First;
             return getDerived().parseIntegerLiteral("unsigned __int128");
-        case 'f':
-            ++First;
-            return getDerived().template parseFloatingLiteral<float>();
-        case 'd':
-            ++First;
-            return getDerived().template parseFloatingLiteral<double>();
-        case 'e':
-            ++First;
-#if defined(__powerpc__) || defined(__s390__)
-            // Handle cases where long doubles encoded with e have the same size
-            // and representation as doubles.
-            return getDerived().template parseFloatingLiteral<double>();
-#else
-            return getDerived().template parseFloatingLiteral<long double>();
-#endif
         case '_':
             if (consumeIf("_Z"))
             {
@@ -6123,61 +5966,6 @@ Node *AbstractManglingParser<Derived, Alloc>::parseEncoding()
         popTrailingNodeArray(ParamsBegin),
         Attrs, NameInfo.CVQualifiers,
         NameInfo.ReferenceQualifier);
-}
-
-template<class Float>
-struct FloatData;
-
-template<>
-struct FloatData<float>
-{
-    static const size_t mangled_size = 8;
-    static const size_t max_demangled_size = 24;
-    static constexpr const char *spec = "%af";
-};
-
-template<>
-struct FloatData<double>
-{
-    static const size_t mangled_size = 16;
-    static const size_t max_demangled_size = 32;
-    static constexpr const char *spec = "%a";
-};
-
-template<>
-struct FloatData<long double>
-{
-#if defined(__mips__) && defined(__mips_n64) || defined(__aarch64__) || defined(__wasm__) || defined(__riscv) || defined(__loongarch__)
-    static const size_t mangled_size = 32;
-#elif defined(__arm__) || defined(__mips__) || defined(__hexagon__)
-    static const size_t mangled_size = 16;
-#else
-    static const size_t mangled_size = 20; // May need to be adjusted to 16 or 24 on other platforms
-#endif
-    // `-0x1.ffffffffffffffffffffffffffffp+16383` + 'L' + '\0' == 42 bytes.
-    // 28 'f's * 4 bits == 112 bits, which is the number of mantissa bits.
-    // Negatives are one character longer than positives.
-    // `0x1.` and `p` are constant, and exponents `+16383` and `-16382` are the
-    // same length. 1 sign bit, 112 mantissa bits, and 15 exponent bits == 128.
-    static const size_t max_demangled_size = 42;
-    static constexpr const char *spec = "%LaL";
-};
-
-template<typename Alloc, typename Derived>
-template<class Float>
-Node *AbstractManglingParser<Alloc, Derived>::parseFloatingLiteral()
-{
-    const size_t N = FloatData<Float>::mangled_size;
-    if (numLeft() <= N)
-        return nullptr;
-    StringView Data(First, First + N);
-    for (char C : Data)
-        if (!std::isxdigit(C))
-            return nullptr;
-    First += N;
-    if (!consumeIf('E'))
-        return nullptr;
-    return make<FloatLiteralImpl<Float>>(Data);
 }
 
 // <seq-id> ::= <0-9A-Z>+
