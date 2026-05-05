@@ -939,11 +939,11 @@ namespace absl
             return true;
         }
 
-        // <unqualified-name> ::= <operator-name> [<abi-tags>]
-        //                    ::= <ctor-dtor-name> [<abi-tags>]
-        //                    ::= <source-name> [<abi-tags>]
-        //                    ::= <local-source-name> [<abi-tags>]
-        //                    ::= <unnamed-type-name> [<abi-tags>]
+        // <unqualified-name> ::= [<module-name>] <operator-name> [<abi-tags>]
+        //                    ::= [<module-name>] <ctor-dtor-name> [<abi-tags>]
+        //                    ::= [<module-name>] <source-name> [<abi-tags>]
+        //                    ::= [<module-name>] <local-source-name> [<abi-tags>]
+        //                    ::= [<module-name>] <unnamed-type-name> [<abi-tags>]
         //                    ::= DC <source-name>+ E  # C++17 structured binding
         //                    ::= F <source-name>  # C++20 constrained friend
         //                    ::= F <operator-name>  # C++20 constrained friend
@@ -957,15 +957,19 @@ namespace absl
             ComplexityGuard guard(state);
             if (guard.IsTooComplex())
                 return false;
+
+            ParseState copy = state->parse_state;
+            ParseModuleDiscriminator(state);
+
             if (ParseOperatorName(state, nullptr) ||
                 ParseCtorDtorName(state) ||
                 ParseSourceName(state) ||
                 ParseLocalSourceName(state) ||
                 ParseUnnamedTypeName(state))
                 return ParseAbiTags(state);
+            state->parse_state = copy;
 
             // DC <source-name>+ E
-            ParseState copy = state->parse_state;
             if (ParseTwoCharToken(state, "DC") &&
                 OneOrMore(ParseSourceName, state) &&
                 ParseOneCharToken(state, 'E'))
